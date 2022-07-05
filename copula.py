@@ -31,6 +31,16 @@ def get_loss(ticker_list):
     loss = -ret
     return loss # negative of return for loss calculations
 
+def normalize_loss(loss):
+    ''' 
+    Remove drift and normalize loss so units in standard deviations.
+    Drift can be ignored considering exercise is to examine daily returns over
+    30 day period
+    '''
+    stdev    = loss.std()
+    normalize_loss = (loss - loss.mean())/stdev 
+    return normalize_loss, stdev
+
 def get_marginals(loss):
     ''' fix mean daily return at zero 
     and estimate marginal dists of daily losses '''
@@ -98,16 +108,18 @@ def fit_gumbel_copula(marginal_cdfs):
     t = 1 + np.exp(fit.x)
     return t
 
-def sim_gauss_copula(corr,size=30):
+def sim_gauss_copula(corr,size):
     ''' 
     Take in correlation matrix -- corr -- as argument for Gauss copula 
     '''
     U = np.random.multivariate_normal(mean=[0,0],cov=corr,size=size)
     U = np.apply_along_axis(stats.norm.cdf, 1, U)
     U = np.split(U,indices_or_sections=2,axis=1)
+    for i in range(len(U)):
+        U[i] = U[i].reshape(1,size)[0] 
     return U
 
-def sim_gumbel_copula(t,size=30):
+def sim_gumbel_copula(t,size):
     '''
     Take in scalar -- t -- as argument for Gumbel copula 
     
@@ -136,46 +148,55 @@ def sim_gumbel_copula(t,size=30):
     U = [u,v_solution.x]
     return U
 
-def sim_losses(copula_params,marginal_params,S=10**3,size=30):
+def sim_losses(copula_params,marginal_params,stdev,S=10**3,size=30):
     corr, t = copula_params
-    portfolio_gauss = [0]*S
-    portfolio_gumbel = [0]*S
+    def sim_cumloss(sim):
+        for i in range(len(sim)):
+            sim[i] = stdev[i]*stats.t.ppf(sim[i],df = marginal_params[i][0],
+                                          loc = 0,
+                                          scale = marginal_params[i][2])
+            sim[i] = np.sum(sim[i])
+        return 0.5 * sim[0] + 0.5* sim[1]
+    
+    portfolio_gauss = [None]*S
     for s in range(S):
         sim = sim_gauss_copula(corr,size)
-        for i in range(len(sim)):
-            sim[i] = stats.t.ppf(sim[i],df = marginal_params[i][0],
-                                              loc = 0,
-                                              scale = marginal_params[i][2])
-            portfolio_gauss[s] += 0.5 * sim[i].sum() # equal weight
+        portfolio_gauss[s] = sim_cumloss(sim)
+        
+    portfolio_gumbel = [None]*S
+    for s in range(S):
         sim = sim_gumbel_copula(t,size)
-        for i in range(len(sim)):
-            sim[i] = stats.t.ppf(sim[i],df = marginal_params[i][0],
-                                              loc = 0,
-                                              scale = marginal_params[i][2])
-            portfolio_gumbel[s] += 0.5 * sim[i].sum() # equal weight
+        portfolio_gumbel[s] = sim_cumloss(sim)
+        
     return portfolio_gauss, portfolio_gumbel
 
 def main():
+    # Get Stock Data
     ticker_list = ['AAPL','XOM']
     loss = get_loss(ticker_list) 
-    marginal_cdfs, marginal_params = get_marginals(loss)
     
+    # Fit marginal distributions
+    loss_norm, stdev = normalize_loss(loss)
+    marginal_cdfs, marginal_params = get_marginals(loss_norm)
+    
+    # Fit copulae
+    corr = fit_gauss_copula(marginal_cdfs)
+    t    = fit_gumbel_copula(marginal_cdfs)
+    copula_params = [corr,t]
+    
+    # Simulate returns from copulae
+    portfolio_gauss, portfolio_gumbel = sim_losses(copula_params,
+                                                   marginal_params,
+                                                   stdev,
+                                                   S=1000,size=30)
+    
+    # Historical returns, 30 rolling period, baseline
     loss['portfolio'] = 0.5 * loss['AAPL'] + 0.5 * loss['XOM'] 
     # 30day var
     portfolio_30d = loss['portfolio'].rolling(30).sum()
     portfolio_30d.dropna(axis=0,inplace=True)
     
-    # Let Y = -X; VaR_a(X) = -inf(x : F_X(x)> a) = F_Y^(-1)(1-a)
-    # Let alpha = 5 percent, time = 30 day
-    # var_baseline = portfolio_30d.quantile([0.95])
-    
-    corr = fit_gauss_copula(marginal_cdfs)
-    t    = fit_gumbel_copula(marginal_cdfs)
-    copula_params = [corr,t]
-    
-    portfolio_gauss, portfolio_gumbel = sim_losses(copula_params,
-                                                   marginal_params,
-                                                   S=10**3,size=30)
+    # percentiles of interest
     p = [0.05,0.1,0.25,0.5,0.75,0.9,0.95]
     
     print('Historical, rolling 30 days')
@@ -183,12 +204,18 @@ def main():
     print('')
     
     print('Model, Gaussian Copula, t-dist marginals')
-    print(pd.DataFrame(portfolio_gauss).describe(p))
+    print(pd.DataFrame(portfolio_gauss,columns=['Gauss']).describe(p))
     print('')
     
     print('Model, Gumbel Copula, t-dist marginals')
-    print(pd.DataFrame(portfolio_gumbel).describe(p))
+    print(pd.DataFrame(portfolio_gumbel,columns=['Gumbel']).describe(p))
     print('')
-
+    
+    print('VaR - alpha = 0.05')
+    VaR = {'Historical':np.quantile(portfolio_30d,0.95).round(4),
+           'Gaussian':np.quantile(portfolio_gauss,0.95).round(4),
+           'Gumbel':np.quantile(portfolio_gumbel,0.95).round(4)}
+    print(VaR)
+    
 if __name__ == "__main__":
     main()
