@@ -4,19 +4,16 @@ Created on Sat Jul  2 17:27:04 2022
 
 @author: renec
 
-dependencies: yfinance
+dependencies: numpy, panda,s scipy, yfinance
 
 """
 
-import yfinance as yf
 import functools
-from matplotlib import pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy import stats
-#from scipy import linalg
 from scipy import optimize
-#from scipy import special
+import yfinance as yf
 
 def log_ret(x):
     return np.log(x)-np.log(x).shift(1)
@@ -28,9 +25,8 @@ def get_loss(ticker_list):
     ret.dropna(axis=0,inplace=True) # for dropna, rows is 0
     ret = ret.apply(func=log_ret,axis=0) # for apply, across columns is 0 -_-
     ret.dropna(axis=0,inplace=True)
-    loss = -ret
-    return loss # negative of return for loss calculations
-
+    loss = -ret # negative of return for loss calculations
+    return loss 
 def normalize_loss(loss):
     ''' 
     Remove drift and normalize loss so units in standard deviations.
@@ -75,21 +71,24 @@ def fit_gauss_copula(marginal_cdfs):
     return corr
     
 def fit_gumbel_copula(marginal_cdfs):
+    ''' 
+    Estimate Gumbel Copula density function using maximum-likelihood estimator.
+    
+    See: https://sdv.dev/Copulas/api/copulas.bivariate.gumbel.html
+    
+    C(u1,u2)=exp(-arg1^(1/t)), 
+    
+    density = partial C(u1,u2)/partial u1 u2 = 
+    exp(-(arg1)^(1/t))/(arg2) * arg1^(2/t -2)/(arg3)^(1-t) 
+        * (1 + (t-1)(arg1^(-1/t)))
+    
+    where 
+        arg1= sum_i (-ln u_i)^t
+        arg2= prod_i u_i
+        arg3 = (prod_i ln u_i)
+    '''
+    
     def obj(t0):
-        ''' 
-        See: https://sdv.dev/Copulas/api/copulas.bivariate.gumbel.html
-        
-        C(u1,u2)=exp(-arg1^(1/t)), 
-        
-        density = partial C(u1,u2)/partial u1 u2 = 
-        exp(-(arg1)^(1/t))/(arg2) * arg1^(2/t -2)/(arg3)^(1-t) 
-            * (1 + (t-1)(arg1^(-1/t)))
-        
-        where 
-            arg1= sum_i (-ln u_i)^t
-            arg2= prod_i u_i
-            arg3 = (prod_i ln u_i)
-        '''
         t = 1 + np.exp(t0) # keep theta between 1 and infinity
         arg1 = 0
         arg2 = 1
@@ -185,6 +184,7 @@ def main():
     copula_params = [corr,t]
     
     # Simulate returns from copulae
+    np.random.seed(seed=18) # set seed to reproduce results
     portfolio_gauss, portfolio_gumbel = sim_losses(copula_params,
                                                    marginal_params,
                                                    stdev,
