@@ -175,7 +175,7 @@ def main():
     
     portfolio_gauss, portfolio_gumbel = sim_losses(copula_params,
                                                    marginal_params,
-                                                   S=10**4,size=30)
+                                                   S=10**3,size=30)
     p = [0.05,0.1,0.25,0.5,0.75,0.9,0.95]
     
     print('Historical, rolling 30 days')
@@ -186,10 +186,9 @@ def main():
     print(pd.DataFrame(portfolio_gauss).describe(p))
     print('')
     
-    print('Model, Gaussian Copula, t-dist marginals')
-    print(pd.DataFrame(portfolio_gauss).describe(p))
+    print('Model, Gumbel Copula, t-dist marginals')
+    print(pd.DataFrame(portfolio_gumbel).describe(p))
     print('')
 
-    
 if __name__ == "__main__":
     main()
